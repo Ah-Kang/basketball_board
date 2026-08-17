@@ -1,0 +1,19 @@
+{
+  "name": "basketball-cafe-board",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "seed": "node scripts/seed-sample-data.js",
+    "scrape": "node scripts/naver-cafe-scraper.js",
+    "scrape:public": "node scripts/naver-cafe-scraper.js --public",
+    "scrape:login": "node scripts/naver-cafe-scraper.js --login --login-only",
+    "scrape:watch": "node scripts/scrape-watch.js",
+    "supabase:push": "node scripts/push-events-to-supabase.js"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.54.0"
+  }
+}

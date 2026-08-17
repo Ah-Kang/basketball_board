@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: basketball-cafe-board
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: AUTO_SCRAPE_ENABLED
+        value: "true"
+      - key: AUTO_SCRAPE_INTERVAL_MS
+        value: "300000"
+      - key: AUTO_SCRAPE_TIMEOUT_MS
+        value: "240000"
+      - key: PRIMARY_COLLECTOR_USER_ID
+        value: default
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

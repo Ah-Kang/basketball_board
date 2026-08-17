@@ -1,0 +1,50 @@
+{
+  "selector": "a[href*='/dongarry/']",
+  "capturedAt": "2026-08-12T05:24:58.820Z",
+  "links": [
+    {
+      "title": "내가 쓴 글",
+      "href": "https://m.cafe.daum.net/dongarry/profile/articles"
+    },
+    {
+      "title": "글쓰기",
+      "href": "https://m.cafe.daum.net/dongarry/_untitled/new"
+    },
+    {
+      "title": "게시판",
+      "href": "https://m.cafe.daum.net/dongarry/"
+    },
+    {
+      "title": "최신글",
+      "href": "https://m.cafe.daum.net/dongarry/_rec?boardType=M"
+    },
+    {
+      "title": "이미지",
+      "href": "https://m.cafe.daum.net/dongarry/_image?boardType=S"
+    },
+    {
+      "title": "공지 2026년 8~9월 BDR 대회 일정(평촌과학고) 작성자 운영진 작성시간 26.07.08 조회수 739",
+      "href": "https://m.cafe.daum.net/dongarry/IVII/43?"
+    },
+    {
+      "title": "공지 2026년 8~9월 BDR 대회 일정(남양주 스포라운드) 작성자 운영진 작성시간 26.07.08 조회수 1,110",
+      "href": "https://m.cafe.daum.net/dongarry/IVII/42?"
+    },
+    {
+      "title": "공지 2026 하반기 BDR 디비전 대회 구분 안내 작성자 운영진 작성시간 26.06.06 조회수 1,964",
+      "href": "https://m.cafe.daum.net/dongarry/IVII/36?"
+    },
+    {
+      "title": "공지 동아리농구방 오픈채팅 개설! 작성자 운영진 작성시간 25.05.10 조회수 6,936",
+      "href": "https://m.cafe.daum.net/dongarry/IVII/26?"
+    },
+    {
+      "title": "댓글수 1",
+      "href": "https://m.cafe.daum.net/dongarry/IVII/26/comments?"
+    },
+    {
+      "title": "PC화면",
+      "href": "https://cafe.daum.net/dongarry/_c21_/recent_bbs_list?grpid=IGaj&fldid=_rec"
+    }
+  ]
+}
