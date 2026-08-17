@@ -4,6 +4,28 @@ const typeLabels = {
   rental: "대관"
 };
 
+const provinceCityMap = {
+  서울: ["강남", "강동", "강북", "강서", "관악", "광진", "구로", "금천", "노원", "도봉", "동대문", "동작", "마포", "서대문", "서초", "성동", "성북", "송파", "양천", "영등포", "용산", "은평", "종로", "중구", "중랑"],
+  경기: ["가평", "고양", "과천", "광명", "광주", "구리", "군포", "김포", "남양주", "동두천", "부천", "성남", "수원", "시흥", "안산", "안성", "안양", "양주", "양평", "여주", "연천", "오산", "용인", "의왕", "의정부", "이천", "파주", "평택", "포천", "하남", "화성", "분당", "일산", "판교"],
+  인천: ["강화", "계양", "남동", "동구", "미추홀", "부평", "서구", "연수", "중구"],
+  부산: ["강서", "금정", "기장", "남구", "동구", "동래", "부산진", "북구", "사상", "사하", "서구", "수영", "연제", "영도", "중구", "해운대"],
+  대구: ["남구", "달서", "달성", "동구", "북구", "서구", "수성", "중구", "군위"],
+  대전: ["대덕", "동구", "서구", "유성", "중구"],
+  광주: ["광산", "남구", "동구", "북구", "서구"],
+  울산: ["남구", "동구", "북구", "울주", "중구"],
+  세종: ["세종"],
+  강원: ["강릉", "고성", "동해", "삼척", "속초", "양구", "양양", "영월", "원주", "인제", "정선", "철원", "춘천", "태백", "평창", "홍천", "화천", "횡성"],
+  충북: ["괴산", "단양", "보은", "영동", "옥천", "음성", "제천", "증평", "진천", "청주", "충주"],
+  충남: ["계룡", "공주", "금산", "논산", "당진", "보령", "부여", "서산", "서천", "아산", "예산", "천안", "청양", "태안", "홍성"],
+  전북: ["고창", "군산", "김제", "남원", "무주", "부안", "순창", "완주", "익산", "임실", "장수", "전주", "정읍", "진안"],
+  전남: ["강진", "고흥", "곡성", "광양", "구례", "나주", "담양", "목포", "무안", "보성", "순천", "신안", "여수", "영광", "영암", "완도", "장성", "장흥", "진도", "함평", "해남", "화순"],
+  경북: ["경산", "경주", "고령", "구미", "김천", "문경", "봉화", "상주", "성주", "안동", "영덕", "영양", "영주", "영천", "예천", "울릉", "울진", "의성", "청도", "청송", "칠곡", "포항"],
+  경남: ["거제", "거창", "고성", "김해", "남해", "밀양", "사천", "산청", "양산", "의령", "진주", "창녕", "창원", "통영", "하동", "함안", "함양", "합천"],
+  제주: ["서귀포", "제주"]
+};
+
+const provinceOrder = Object.keys(provinceCityMap);
+
 const formatter = new Intl.DateTimeFormat("ko-KR", {
   year: "numeric",
   month: "long"
@@ -22,7 +44,8 @@ const state = {
   selectedDate: "2026-08-13",
   dayMode: "selected",
   filters: {
-    area: "all",
+    province: "all",
+    city: "all",
     type: "all",
     openOnly: true
   }
@@ -33,7 +56,8 @@ const els = {
   calendar: document.getElementById("calendar"),
   eventList: document.getElementById("eventList"),
   selectedDate: document.getElementById("selectedDate"),
-  areaFilter: document.getElementById("areaFilter"),
+  provinceFilter: document.getElementById("provinceFilter"),
+  cityFilter: document.getElementById("cityFilter"),
   typeFilter: document.getElementById("typeFilter"),
   openOnly: document.getElementById("openOnly"),
   prevMonth: document.getElementById("prevMonth"),
@@ -55,7 +79,7 @@ async function loadEvents() {
   const response = await fetch("/api/events");
   if (!response.ok) throw new Error("events.json을 불러오지 못했습니다.");
   state.events = await response.json();
-  fillAreaOptions(true);
+  fillRegionOptions(true);
   els.syncStatus.textContent = `마지막 갱신 ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`;
   renderStats();
   render();
@@ -68,27 +92,90 @@ function renderStats() {
   els.openCount.textContent = state.events.filter((event) => event.status === "open").length;
 }
 
-function fillAreaOptions(reset = false) {
+function fillRegionOptions(reset = false) {
   if (reset) {
-    els.areaFilter.replaceChildren(new Option("전체", "all"));
+    els.provinceFilter.replaceChildren(new Option("전체", "all"));
+    els.cityFilter.replaceChildren(new Option("전체", "all"));
   }
-  const areas = [...new Set(state.events.map((event) => event.area).filter(Boolean))].sort();
-  for (const area of areas) {
-    if ([...els.areaFilter.options].some((option) => option.value === area)) continue;
+
+  const regions = state.events.map(getEventRegion);
+  const provinces = [...new Set(regions.map((region) => region.province).filter(Boolean))]
+    .sort((a, b) => provinceOrder.indexOf(a) - provinceOrder.indexOf(b));
+
+  for (const province of provinces) {
+    if ([...els.provinceFilter.options].some((option) => option.value === province)) continue;
     const option = document.createElement("option");
-    option.value = area;
-    option.textContent = area;
-    els.areaFilter.append(option);
+    option.value = province;
+    option.textContent = province;
+    els.provinceFilter.append(option);
   }
+
+  if (![...els.provinceFilter.options].some((option) => option.value === state.filters.province)) {
+    state.filters.province = "all";
+    state.filters.city = "all";
+  }
+  els.provinceFilter.value = state.filters.province;
+  fillCityOptions();
+}
+
+function fillCityOptions() {
+  const selectedProvince = state.filters.province;
+  const currentCity = state.filters.city;
+  els.cityFilter.replaceChildren(new Option("전체", "all"));
+
+  const cities = [...new Set(state.events
+    .map(getEventRegion)
+    .filter((region) => selectedProvince === "all" || region.province === selectedProvince)
+    .map((region) => region.city)
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ko-KR"));
+
+  for (const city of cities) {
+    const option = document.createElement("option");
+    option.value = city;
+    option.textContent = city;
+    els.cityFilter.append(option);
+  }
+
+  if (![...els.cityFilter.options].some((option) => option.value === currentCity)) {
+    state.filters.city = "all";
+  }
+  els.cityFilter.value = state.filters.city;
 }
 
 function filteredEvents() {
   return state.events.filter((event) => {
-    if (state.filters.area !== "all" && event.area !== state.filters.area) return false;
+    const region = getEventRegion(event);
+    if (state.filters.province !== "all" && region.province !== state.filters.province) return false;
+    if (state.filters.city !== "all" && region.city !== state.filters.city) return false;
     if (state.filters.type !== "all" && event.type !== state.filters.type) return false;
     if (state.filters.openOnly && event.status !== "open") return false;
     return true;
   });
+}
+
+function getEventRegion(event) {
+  const haystack = [event.area, event.venue, event.title, event.summary, event.bodyText].filter(Boolean).join(" ");
+  const area = normalizePlaceToken(event.area);
+
+  for (const [province, cities] of Object.entries(provinceCityMap)) {
+    if (area && cities.includes(area)) return { province, city: area };
+  }
+
+  for (const province of provinceOrder) {
+    const provinceMatch = haystack.includes(province);
+    const city = provinceCityMap[province].find((name) => haystack.includes(name));
+    if (city) return { province, city };
+    if (provinceMatch) return { province, city: "" };
+  }
+
+  return { province: "", city: area || event.area || "" };
+}
+
+function normalizePlaceToken(value) {
+  return String(value || "")
+    .replace(/특별시|광역시|특별자치시|특별자치도|자치도|도|시|군|구/g, "")
+    .trim();
 }
 
 function monthCells(date) {
@@ -312,8 +399,15 @@ els.nextMonth.addEventListener("click", () => {
   render();
 });
 
-els.areaFilter.addEventListener("change", (event) => {
-  state.filters.area = event.target.value;
+els.provinceFilter.addEventListener("change", (event) => {
+  state.filters.province = event.target.value;
+  state.filters.city = "all";
+  fillCityOptions();
+  render();
+});
+
+els.cityFilter.addEventListener("change", (event) => {
+  state.filters.city = event.target.value;
   render();
 });
 
