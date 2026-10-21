@@ -1,3 +1,5 @@
+import {loadMember,clearMember,attachActivityActions} from './members.js';
+
 const typeLabels = {
   pickup: "픽업",
   practice: "연습게임",
@@ -98,6 +100,7 @@ function setSignupMode(value) {
 signupToggle.addEventListener("click", () => setSignupMode(!signupMode));
 
 function requireLogin(message = "") {
+  clearMember();
   sessionReady = false;
   state.events = [];
   els.eventList.replaceChildren();
@@ -122,6 +125,7 @@ async function initializeSession() {
   loginScreen.hidden = true;
   document.getElementById("app").hidden = false;
   logoutButton.hidden = !session.required;
+  loadMember(session.user);
   await loadEvents();
 }
 
@@ -409,6 +413,7 @@ function openEventDialog(event) {
       <a class="source-link" href="${escapeAttribute(event.sourceUrl)}" target="_blank" rel="noreferrer">원문보기</a>
     </div>
   `;
+  attachActivityActions(els.dialogContent,event);
   if (typeof els.eventDialog.showModal === "function") {
     els.eventDialog.showModal();
   } else {

@@ -4,9 +4,11 @@ import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fetchEventsFromSupabase, isSupabaseConfigured } from "./lib/supabase-events.js";
 import { createAuth } from "./lib/auth.js";
+import { createMemberStore } from "./lib/members.js";
 
 const root = resolve(process.cwd());
 const auth = createAuth();
+const members = createMemberStore();
 const publicDir = join(root, "public");
 const dataDir = resolve(process.env.APP_DATA_DIR || join(root, "data"));
 mkdirSync(dataDir, { recursive: true });
@@ -85,6 +87,32 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "GET" && parsed.pathname === "/health") {
     sendJson(res, { ok: true });
+    return;
+  }
+
+  if (["/api/me/profile", "/api/me/activities"].includes(parsed.pathname)) {
+    const member = auth.user(req);
+    if (!member?.id) { sendJson(res, {error:"프로필을 사용하려면 로그인해 주세요."}, 401); return; }
+    try {
+      if (req.method === "GET") {
+        sendJson(res, parsed.pathname.endsWith("profile") ? await members.profile(member) : await members.activities(member)); return;
+      }
+      if (req.method !== "POST") { sendJson(res,{error:"지원하지 않는 요청입니다."},405); return; }
+      let originOk = false;
+      try { originOk = new URL(req.headers.origin).host === req.headers.host; } catch {}
+      if (!originOk || !req.headers["content-type"]?.startsWith("application/json")) { sendJson(res,{error:"잘못된 요청입니다."},403); return; }
+      let raw="";
+      for await (const chunk of req) {
+        raw+=chunk;
+        if (Buffer.byteLength(raw)>8192) {sendJson(res,{error:"요청이 너무 큽니다."},413);return;}
+      }
+      const input=JSON.parse(raw);
+      if (parsed.pathname.endsWith("profile")) sendJson(res,await members.saveProfile(member,input));
+      else {
+        const event=(await readEvents()).find(item=>item.id===input.eventId);
+        sendJson(res,await members.saveActivity(member,input.eventId,input.status,event));
+      }
+    } catch (error) {sendJson(res,{error:error instanceof SyntaxError ? "입력 내용을 확인해 주세요." : error.message},400);}
     return;
   }
 
