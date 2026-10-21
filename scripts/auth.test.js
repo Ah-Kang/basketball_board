@@ -42,3 +42,38 @@ test("login retries are bounded", async () => {
   for (let i=0; i<20; i++) await auth.login("unknown@example.com", "wrong");
   assert.equal((await auth.login("unknown@example.com", "wrong")).status, 429);
 });
+
+test("signup is disabled unless explicitly enabled", async () => {
+  const auth = createAuth({ env, request: () => { throw new Error('Unexpected request'); } });
+  assert.equal((await auth.signup('new@example.com', 'password123')).status, 403);
+});
+
+test("public signup creates a confirmed account and immediately establishes a session", async () => {
+  const calls = [];
+  const auth = createAuth({ env: {...env, SELF_SIGNUP_ENABLED:'true', ALLOWED_EMAILS:''}, request: async (url, options) => {
+    calls.push({url, body: options.body && JSON.parse(options.body)});
+    if (url.endsWith('/admin/users')) return new Response('{}');
+    if (url.includes('/token?')) return new Response(JSON.stringify({access_token:'new-token', expires_in:3600}));
+    return new Response(JSON.stringify({email:'new@example.com',email_confirmed_at:'2026-10-21'}));
+  }});
+  const result = await auth.signup('NEW@example.com','password123');
+  assert.equal(result.status,200);
+  assert.equal(calls[0].body.email_confirm,true);
+  assert.equal(calls[0].body.email,'new@example.com');
+  assert.equal(auth.user({headers:{cookie:result.cookie.split(';')[0]}}).email,'new@example.com');
+});
+
+test("invalid or duplicate signup cannot log in or modify an existing account", async () => {
+  let requests = 0;
+  const auth = createAuth({env:{...env,SELF_SIGNUP_ENABLED:'true'},request:async url => {
+    requests++;
+    assert.ok(url.endsWith('/admin/users'));
+    return new Response('{}',{status:422});
+  }});
+  assert.equal((await auth.signup('bad','short')).status,400);
+  assert.equal(requests,0);
+  const result=await auth.signup('owner@example.com','password123');
+  assert.equal(result.status,400);
+  assert.equal(result.cookie,undefined);
+  assert.equal(requests,1);
+});

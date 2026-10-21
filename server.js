@@ -52,10 +52,10 @@ const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
   }
   if (req.method === "GET" && parsed.pathname === "/api/session") {
-    sendJson(res, { required: auth.required, configured: auth.configured, user: auth.user(req) });
+    sendJson(res, { required: auth.required, configured: auth.configured, signupEnabled: auth.signupEnabled, user: auth.user(req) });
     return;
   }
-  if (req.method === "POST" && ["/api/login", "/api/logout"].includes(parsed.pathname)) {
+  if (req.method === "POST" && ["/api/login", "/api/signup", "/api/logout"].includes(parsed.pathname)) {
     const origin = req.headers.origin;
     let sameOrigin = false;
     try { sameOrigin = Boolean(origin && new URL(origin).host === req.headers.host); } catch {}
@@ -73,7 +73,7 @@ const server = createServer(async (req, res) => {
         if (Buffer.byteLength(body) > 8192) { sendJson(res, { error: "요청이 너무 큽니다." }, 413); return; }
       }
       const credentials = JSON.parse(body);
-      const result = await auth.login(credentials.email, credentials.password);
+      const result = await (parsed.pathname === "/api/signup" ? auth.signup : auth.login)(credentials.email, credentials.password);
       if (result.cookie) res.setHeader("Set-Cookie", result.cookie);
       sendJson(res, result.error ? { error: result.error } : { user: result.user }, result.status);
     } catch { sendJson(res, { error: "잘못된 요청입니다." }, 400); }

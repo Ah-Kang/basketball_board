@@ -27,5 +27,7 @@ services:
         sync: false
       - key: AUTH_REQUIRED
         value: "true"
+      - key: SELF_SIGNUP_ENABLED
+        value: "true"
       - key: ALLOWED_EMAILS
         sync: false

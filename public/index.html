@@ -3,9 +3,10 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#ffffff"><title>바스켓 · 농구 일정 찾기</title><link rel="stylesheet" href="/styles.css"></head>
 <body data-mobile-tab="home">
 <section id="loginScreen" class="login-screen" aria-labelledby="loginTitle">
-  <div class="app-mark" aria-hidden="true">b</div><p class="eyebrow">우리끼리 함께하는 농구</p><h1 id="loginTitle">바스켓에 로그인</h1><p class="login-description">초대받은 이메일 계정으로 로그인해 주세요.</p>
+  <div class="app-mark" aria-hidden="true">b</div><p class="eyebrow">함께하는 농구</p><h1 id="loginTitle">바스켓에 로그인</h1><p class="login-description" id="loginDescription">이메일 계정으로 로그인해 주세요.</p>
   <form id="loginForm"><label>이메일<input name="email" type="email" autocomplete="username" required></label><label>비밀번호<input name="password" type="password" autocomplete="current-password" required></label><button type="submit" id="loginSubmit">로그인</button></form>
   <p id="loginMessage" role="status">로그인 상태를 확인하고 있어요.</p>
+  <button id="signupToggle" class="auth-toggle" type="button" hidden>처음 오셨나요? 회원가입</button>
 </section>
 <div id="app" hidden>
 <header class="topbar"><a class="brand-block" href="/" aria-label="바스켓 홈"><span class="app-mark" aria-hidden="true">b</span><h1>바스켓</h1></a><div class="account-controls"><p id="syncStatus" class="sync-status" role="status">일정 불러오는 중</p><button id="logoutButton" class="reset-button" type="button" hidden>로그아웃</button></div></header>

@@ -80,6 +80,22 @@ const loginScreen = document.getElementById("loginScreen");
 const loginMessage = document.getElementById("loginMessage");
 const loginForm = document.getElementById("loginForm");
 const logoutButton = document.getElementById("logoutButton");
+const signupToggle = document.getElementById("signupToggle");
+let signupMode = false;
+function setSignupMode(value) {
+  signupMode = value;
+  document.getElementById("loginTitle").textContent = value ? "바스켓 회원가입" : "바스켓에 로그인";
+  document.getElementById("loginDescription").textContent = value ? "이메일과 비밀번호만 입력하면 바로 시작할 수 있어요." : "이메일 계정으로 로그인해 주세요.";
+  document.getElementById("loginSubmit").textContent = value ? "가입하고 바로 시작하기" : "로그인";
+  signupToggle.textContent = value ? "이미 계정이 있나요? 로그인" : "처음 오셨나요? 회원가입";
+  loginForm.elements.password.autocomplete = value ? "new-password" : "current-password";
+  loginForm.elements.password.minLength = value ? 8 : 1;
+  loginForm.elements.password.maxLength = 128;
+  loginForm.elements.password.placeholder = value ? "8자 이상" : "";
+  loginForm.elements.password.value = "";
+  loginMessage.textContent = "";
+}
+signupToggle.addEventListener("click", () => setSignupMode(!signupMode));
 
 function requireLogin(message = "") {
   sessionReady = false;
@@ -97,6 +113,7 @@ async function initializeSession() {
   const response = await fetch("/api/session");
   if (!response.ok) throw new Error("로그인 상태를 확인할 수 없습니다.");
   const session = await response.json();
+  signupToggle.hidden = !session.signupEnabled;
   if (session.required && !session.user) {
     requireLogin(session.configured ? "" : "로그인 설정을 준비 중입니다.");
     return;
@@ -112,18 +129,20 @@ loginForm.addEventListener("submit", async event => {
   event.preventDefault();
   const submit = document.getElementById("loginSubmit");
   submit.disabled = true;
-  loginMessage.textContent = "로그인하고 있어요.";
+  signupToggle.disabled = true;
+  loginMessage.textContent = signupMode ? "가입하고 있어요." : "로그인하고 있어요.";
   try {
-    const response = await fetch("/api/login", {
+    const response = await fetch(signupMode ? "/api/signup" : "/api/login", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: loginForm.elements.email.value, password: loginForm.elements.password.value })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "로그인하지 못했습니다.");
     loginForm.reset();
+    setSignupMode(false);
     await initializeSession();
   } catch (error) { loginMessage.textContent = error.message; }
-  finally { submit.disabled = false; }
+  finally { submit.disabled = false; signupToggle.disabled = false; }
 });
 logoutButton.addEventListener("click", async () => {
   try {

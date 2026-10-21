@@ -4,8 +4,8 @@ Render Free에서 웹/API, Supabase Free에서 데이터와 로그인, 공개 Gi
 
 ## 활성화 순서
 
-1. Supabase에 `supabase/schema.sql` 및 기존 DB의 경우 `supabase/private-access.sql`을 적용한다. 초대 사용자만 계정을 만들고 공개 회원가입을 비활성화한다.
-2. Render의 기존 서비스는 Free를 유지한다. `render.yaml`에 따라 `AUTH_REQUIRED=true`, `AUTO_SCRAPE_ENABLED=false`, `ALLOWED_EMAILS`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`를 설정한다. 계정의 초과 과금 및 사용량 설정을 확인하기 전 무료 운영이 보장됐다고 판단하지 않는다.
+1. Supabase에 `supabase/schema.sql` 및 기존 DB의 경우 `supabase/private-access.sql`을 적용한다. DB 직접 조회는 서버 전용으로 유지한다. 앱의 `SELF_SIGNUP_ENABLED=true` 설정으로 누구나 가입 후 자동 승인·로그인할 수 있다. 서버가 새 계정만 생성하며 기존 계정을 덮어쓰지 않는다. Supabase의 직접 회원가입 설정은 비활성화 상태여도 된다.
+2. Render의 기존 서비스는 Free를 유지한다. `render.yaml`에 따라 `AUTH_REQUIRED=true`, `SELF_SIGNUP_ENABLED=true`, `AUTO_SCRAPE_ENABLED=false`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`를 설정한다. 초대 전용으로 되돌리려면 `SELF_SIGNUP_ENABLED=false`와 `ALLOWED_EMAILS`를 설정한다. 계정의 초과 과금 및 사용량 설정을 확인하기 전 무료 운영이 보장됐다고 판단하지 않는다.
 3. 소유자가 승인한 뒤 GitHub Actions Secrets에 `CAFE_COOKIES_JSON`(로컬 로그인 쿠키 JSON), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`를 등록한다. 쿠키와 키를 소스/로그/아티팩트에 넣지 않는다.
 4. 변경사항을 검토하여 push한 뒤 Actions의 Collect basketball events를 수동 실행한다. 미로그인 API 차단, 허용된 사용자 로그인, Supabase 저장 및 웹 표시를 확인한다.
 5. 수집은 매시 17분 예약 실행한다. GitHub 사정에 따라 지연/누락될 수 있으며, 공개 저장소가 60일간 비활성이면 예약이 중지될 수 있다.
