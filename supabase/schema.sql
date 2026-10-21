@@ -48,8 +48,5 @@ execute function public.set_updated_at();
 alter table public.events enable row level security;
 
 drop policy if exists "Events are publicly readable" on public.events;
-create policy "Events are publicly readable"
-on public.events
-for select
-to anon, authenticated
-using (true);
+-- Private app: only the server's service role reads/writes event data.
+revoke all on table public.events from anon, authenticated;

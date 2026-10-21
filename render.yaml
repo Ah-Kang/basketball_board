@@ -14,7 +14,7 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: AUTO_SCRAPE_ENABLED
-        value: "true"
+        value: "false"
       - key: AUTO_SCRAPE_INTERVAL_MS
         value: "300000"
       - key: AUTO_SCRAPE_TIMEOUT_MS
@@ -24,4 +24,8 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: ALLOWED_EMAILS
         sync: false

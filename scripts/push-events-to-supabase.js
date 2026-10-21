@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isSupabaseConfigured, upsertEventsToSupabase } from "../lib/supabase-events.js";
 
-const eventsPath = join(process.cwd(), "data", "events.json");
+const eventsPath = join(process.env.APP_DATA_DIR || join(process.cwd(), "data"), "events.json");
 
 if (!isSupabaseConfigured()) {
   throw new Error("SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY 환경변수를 먼저 설정하세요.");

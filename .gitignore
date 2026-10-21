@@ -1,5 +1,15 @@
 node_modules/
+data/
+.npm-cache/
+.playwright-browsers/
+data/auth-*-cookies.json
+data/collector.log
+data/debug/
+data/events.before-refresh.json
 .browser-session/
 .browser-sessions/
 config/cafes.json
 .DS_Store
+.env
+.env.*
+!.env.example

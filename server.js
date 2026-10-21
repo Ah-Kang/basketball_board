@@ -1,12 +1,15 @@
-import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { fetchEventsFromSupabase, isSupabaseConfigured } from "./lib/supabase-events.js";
+import { createAuth } from "./lib/auth.js";
 
 const root = resolve(process.cwd());
+const auth = createAuth();
 const publicDir = join(root, "public");
-const dataDir = join(root, "data");
+const dataDir = resolve(process.env.APP_DATA_DIR || join(root, "data"));
+mkdirSync(dataDir, { recursive: true });
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 const collectorUserId = sanitizeUserId(process.env.PRIMARY_COLLECTOR_USER_ID || "default");
@@ -43,6 +46,42 @@ function isInside(base, target) {
 
 const server = createServer(async (req, res) => {
   const parsed = new URL(req.url || "/", `http://localhost:${port}`);
+
+  if (parsed.pathname.startsWith("/api/")) {
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  }
+  if (req.method === "GET" && parsed.pathname === "/api/session") {
+    sendJson(res, { required: auth.required, configured: auth.configured, user: auth.user(req) });
+    return;
+  }
+  if (req.method === "POST" && ["/api/login", "/api/logout"].includes(parsed.pathname)) {
+    const origin = req.headers.origin;
+    let sameOrigin = false;
+    try { sameOrigin = Boolean(origin && new URL(origin).host === req.headers.host); } catch {}
+    if (!sameOrigin || !req.headers["content-type"]?.startsWith("application/json")) {
+      sendJson(res, { error: "잘못된 요청입니다." }, 403); return;
+    }
+    if (parsed.pathname === "/api/logout") {
+      res.setHeader("Set-Cookie", auth.logout(req));
+      sendJson(res, { ok: true }); return;
+    }
+    let body = "";
+    try {
+      for await (const chunk of req) {
+        body += chunk;
+        if (Buffer.byteLength(body) > 8192) { sendJson(res, { error: "요청이 너무 큽니다." }, 413); return; }
+      }
+      const credentials = JSON.parse(body);
+      const result = await auth.login(credentials.email, credentials.password);
+      if (result.cookie) res.setHeader("Set-Cookie", result.cookie);
+      sendJson(res, result.error ? { error: result.error } : { user: result.user }, result.status);
+    } catch { sendJson(res, { error: "잘못된 요청입니다." }, 400); }
+    return;
+  }
+  if (parsed.pathname.startsWith("/api/") && auth.required && !auth.user(req)) {
+    sendJson(res, { error: "로그인이 필요합니다." }, 401); return;
+  }
 
   if (req.method === "GET" && parsed.pathname === "/health") {
     sendJson(res, { ok: true });

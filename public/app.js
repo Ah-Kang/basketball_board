@@ -40,9 +40,10 @@ const dateLabelFormatter = new Intl.DateTimeFormat("ko-KR", {
 
 const state = {
   events: [],
-  month: new Date(2026, 7, 1),
-  selectedDate: "2026-08-13",
-  dayMode: "selected",
+  month: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  selectedDate: isoDate(new Date()),
+  calendarExpanded: false,
+  tab: "home",
   filters: {
     province: "all",
     city: "all",
@@ -58,44 +59,95 @@ const els = {
   selectedDate: document.getElementById("selectedDate"),
   provinceFilter: document.getElementById("provinceFilter"),
   cityFilter: document.getElementById("cityFilter"),
-  typeFilter: document.getElementById("typeFilter"),
   openOnly: document.getElementById("openOnly"),
   prevMonth: document.getElementById("prevMonth"),
   nextMonth: document.getElementById("nextMonth"),
   syncStatus: document.getElementById("syncStatus"),
-  totalCount: document.getElementById("totalCount"),
-  todayCount: document.getElementById("todayCount"),
-  openCount: document.getElementById("openCount"),
+  calendarToggle: document.getElementById("calendarToggle"),
+  calendarPanel: document.querySelector(".calendar-panel"),
+  selectedTitle: document.getElementById("selectedTitle"),
+  resultCount: document.getElementById("resultCount"),
   mobileTabs: document.querySelectorAll("[data-mobile-tab]"),
-  dayModeButtons: document.querySelectorAll("[data-day-mode]"),
+  typeButtons: document.querySelectorAll("[data-type]"),
   eventDialog: document.getElementById("eventDialog"),
   dialogContent: document.getElementById("dialogContent"),
   dialogClose: document.getElementById("dialogClose")
 };
 
 document.body.dataset.mobileTab = "home";
+let sessionReady = false;
+const loginScreen = document.getElementById("loginScreen");
+const loginMessage = document.getElementById("loginMessage");
+const loginForm = document.getElementById("loginForm");
+const logoutButton = document.getElementById("logoutButton");
+
+function requireLogin(message = "") {
+  sessionReady = false;
+  state.events = [];
+  els.eventList.replaceChildren();
+  els.calendar.replaceChildren();
+  els.dialogContent.replaceChildren();
+  closeEventDialog();
+  document.getElementById("app").hidden = true;
+  loginScreen.hidden = false;
+  loginMessage.textContent = message;
+}
+
+async function initializeSession() {
+  const response = await fetch("/api/session");
+  if (!response.ok) throw new Error("로그인 상태를 확인할 수 없습니다.");
+  const session = await response.json();
+  if (session.required && !session.user) {
+    requireLogin(session.configured ? "" : "로그인 설정을 준비 중입니다.");
+    return;
+  }
+  sessionReady = true;
+  loginScreen.hidden = true;
+  document.getElementById("app").hidden = false;
+  logoutButton.hidden = !session.required;
+  await loadEvents();
+}
+
+loginForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const submit = document.getElementById("loginSubmit");
+  submit.disabled = true;
+  loginMessage.textContent = "로그인하고 있어요.";
+  try {
+    const response = await fetch("/api/login", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: loginForm.elements.email.value, password: loginForm.elements.password.value })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "로그인하지 못했습니다.");
+    loginForm.reset();
+    await initializeSession();
+  } catch (error) { loginMessage.textContent = error.message; }
+  finally { submit.disabled = false; }
+});
+logoutButton.addEventListener("click", async () => {
+  try {
+    const response = await fetch("/api/logout", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    if (!response.ok) throw new Error();
+    requireLogin("로그아웃했습니다.");
+  } catch { els.syncStatus.textContent = "로그아웃하지 못했습니다. 다시 시도해 주세요."; }
+});
 
 async function loadEvents() {
   const response = await fetch("/api/events");
+  if (response.status === 401) { requireLogin("다시 로그인해 주세요."); return; }
   if (!response.ok) throw new Error("events.json을 불러오지 못했습니다.");
   state.events = await response.json();
   fillRegionOptions(true);
-  els.syncStatus.textContent = `마지막 갱신 ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`;
-  renderStats();
+  els.syncStatus.textContent = `화면 갱신 ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`;
+  document.getElementById("todayLabel").textContent = dateLabelFormatter.format(new Date());
   render();
-}
-
-function renderStats() {
-  const today = isoDate(new Date());
-  els.totalCount.textContent = state.events.length;
-  els.todayCount.textContent = state.events.filter((event) => event.date === today).length;
-  els.openCount.textContent = state.events.filter((event) => event.status === "open").length;
 }
 
 function fillRegionOptions(reset = false) {
   if (reset) {
-    els.provinceFilter.replaceChildren(new Option("전체", "all"));
-    els.cityFilter.replaceChildren(new Option("전체", "all"));
+    els.provinceFilter.replaceChildren(new Option("지역 전체", "all"));
+    els.cityFilter.replaceChildren(new Option("시·구 전체", "all"));
   }
 
   const regions = state.events.map(getEventRegion);
@@ -121,7 +173,7 @@ function fillRegionOptions(reset = false) {
 function fillCityOptions() {
   const selectedProvince = state.filters.province;
   const currentCity = state.filters.city;
-  els.cityFilter.replaceChildren(new Option("전체", "all"));
+  els.cityFilter.replaceChildren(new Option("시·구 전체", "all"));
 
   const cities = [...new Set(state.events
     .map(getEventRegion)
@@ -204,7 +256,24 @@ function render() {
   els.monthLabel.textContent = formatter.format(state.month);
   els.calendar.replaceChildren();
 
-  for (const date of monthCells(state.month)) {
+  const selected = new Date(`${state.selectedDate}T00:00:00`);
+  const weekStart = new Date(selected);
+  weekStart.setDate(selected.getDate() - selected.getDay());
+  const cells = state.calendarExpanded ? monthCells(state.month) : Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + i);
+    return date;
+  });
+  els.calendarPanel.classList.toggle("is-expanded", state.calendarExpanded);
+  els.calendarToggle.setAttribute("aria-expanded", String(state.calendarExpanded));
+  els.calendarToggle.innerHTML = state.calendarExpanded ? '주간 날짜로 접기 <span aria-hidden="true">⌃</span>' : '월간 달력 펼치기 <span aria-hidden="true">⌄</span>';
+  els.prevMonth.setAttribute("aria-label", state.calendarExpanded ? "이전 달" : "이전 주");
+  els.nextMonth.setAttribute("aria-label", state.calendarExpanded ? "다음 달" : "다음 주");
+  els.provinceFilter.dataset.active = String(state.filters.province !== "all");
+  els.cityFilter.dataset.active = String(state.filters.city !== "all");
+  for (const button of els.typeButtons) button.setAttribute("aria-pressed", String(button.dataset.type === state.filters.type));
+
+  for (const date of cells) {
     const key = isoDate(date);
     const dayEvents = grouped.get(key) || [];
     const button = document.createElement("button");
@@ -212,36 +281,27 @@ function render() {
     button.className = "day";
     button.classList.toggle("is-muted", date.getMonth() !== state.month.getMonth());
     button.classList.toggle("is-selected", key === state.selectedDate);
+    button.classList.toggle("is-today", key === isoDate(new Date()));
+    button.setAttribute("aria-pressed", String(key === state.selectedDate));
+    if (key === isoDate(new Date())) button.setAttribute("aria-current", "date");
     button.setAttribute("aria-label", `${dateLabelFormatter.format(date)}, 일정 ${dayEvents.length}개`);
 
     const head = document.createElement("div");
     head.className = "day-number";
-    head.innerHTML = `<span>${date.getDate()}</span><span class="count">${dayEvents.length ? `${dayEvents.length}개` : ""}</span>`;
+    head.textContent = date.getDate();
     button.append(head);
 
-    const chips = document.createElement("div");
-    chips.className = "chips";
-    for (const event of dayEvents.slice(0, 3)) {
-      const chip = document.createElement("div");
-      chip.className = `chip ${event.type} ${event.status === "closed" ? "closed" : ""}`;
-      chip.innerHTML = `<time>${escapeHtml(event.startTime)}</time><span>${escapeHtml(event.area)} · ${escapeHtml(typeLabels[event.type] || event.type)}</span>`;
-      chips.append(chip);
-    }
-    if (dayEvents.length > 3) {
-      const more = document.createElement("div");
-      more.className = "more";
-      more.textContent = `+${dayEvents.length - 3} 더보기`;
-      chips.append(more);
-    }
-    button.append(chips);
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = dayEvents.length ? `${dayEvents.length}개` : "";
+    button.append(count);
     button.addEventListener("click", () => {
       state.selectedDate = key;
       if (date.getMonth() !== state.month.getMonth()) {
         state.month = new Date(date.getFullYear(), date.getMonth(), 1);
       }
-      state.dayMode = "selected";
-      setMobileTab("events");
       render();
+      [...els.calendar.children].find((day) => day.getAttribute("aria-pressed") === "true")?.focus({ preventScroll: true });
     });
     els.calendar.append(button);
   }
@@ -260,18 +320,17 @@ function groupByDate(events) {
 }
 
 function renderSelectedDay(events) {
-  const isTodayMode = state.dayMode === "today";
-  const targetDate = isTodayMode ? new Date() : new Date(`${state.selectedDate}T00:00:00`);
+  const isHome = state.tab === "home";
+  const targetDate = new Date(`${state.selectedDate}T00:00:00`);
   const targetKey = isoDate(targetDate);
   const dayEvents = events
-    .filter((event) => event.date === targetKey)
-    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+    .filter((event) => isHome ? event.date >= isoDate(new Date()) : event.date === targetKey)
+    .sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`));
 
-  els.selectedDate.textContent = dateLabelFormatter.format(targetDate);
-  for (const button of els.dayModeButtons) {
-    button.classList.toggle("is-active", button.dataset.dayMode === state.dayMode);
-  }
-  renderEventCards(els.eventList, dayEvents, isTodayMode ? "오늘 조건에 맞는 일정이 없습니다." : "조건에 맞는 일정이 없습니다.");
+  els.selectedTitle.textContent = isHome ? "참여할 수 있는 경기" : "선택한 날의 경기";
+  els.selectedDate.textContent = isHome ? "오늘부터 · 가까운 날짜순" : dateLabelFormatter.format(targetDate);
+  els.resultCount.textContent = `${dayEvents.length}개`;
+  renderEventCards(els.eventList, dayEvents, "조건에 맞는 경기가 없어요. 날짜나 지역 필터를 바꿔보세요.");
 }
 
 function renderEventCards(container, events, emptyMessage) {
@@ -291,20 +350,11 @@ function renderEventCards(container, events, emptyMessage) {
     card.className = "event-card";
     card.setAttribute("aria-label", `${event.title} 상세 보기`);
     card.innerHTML = `
-      <header>
-        <h3>${escapeHtml(event.title)}</h3>
-        <span class="badge ${event.status === "closed" ? "closed" : ""}">${event.status === "open" ? "모집중" : "마감"}</span>
-      </header>
-      <div class="meta">
-        <span>${escapeHtml(typeLabels[event.type] || event.type)}</span>
-        <span>${escapeHtml(event.startTime)}-${escapeHtml(event.endTime)}</span>
-        <span>${escapeHtml(event.area)}</span>
-        <span>${escapeHtml(event.venue)}</span>
-        <span>${escapeHtml(event.level)}</span>
-        <span>${formatFee(event.fee)}</span>
-        <span>남은 자리 ${event.spots}</span>
-      </div>
-      <p class="summary">${escapeHtml(event.summary)}</p>
+      <div class="card-topline"><span class="type-badge">${escapeHtml(typeLabels[event.type] || event.type)}</span><span class="badge ${event.status === "closed" ? "closed" : ""}">${event.status === "open" ? "모집 중" : "마감"}</span></div>
+      <h3>${escapeHtml(event.title)}</h3>
+      <p class="event-time">${escapeHtml(event.date)} · ${escapeHtml(event.startTime)}–${escapeHtml(event.endTime)}</p>
+      <p class="event-place">${escapeHtml([event.area, event.venue].filter(Boolean).join(" · "))}</p>
+      <div class="card-footer"><span>${formatFee(event.fee)}</span><span>상세 보기 ›</span></div>
     `;
     card.addEventListener("click", () => {
       openEventDialog(event);
@@ -389,13 +439,35 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("`", "&#96;");
 }
 
-els.prevMonth.addEventListener("click", () => {
-  state.month = new Date(state.month.getFullYear(), state.month.getMonth() - 1, 1);
+function moveDate(direction) {
+  const date = new Date(`${state.selectedDate}T00:00:00`);
+  if (state.calendarExpanded) {
+    const nextMonth = new Date(date.getFullYear(), date.getMonth() + direction, 1);
+    const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
+    date.setDate(1);
+    date.setFullYear(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(Number(state.selectedDate.slice(-2)), lastDay));
+  } else date.setDate(date.getDate() + direction * 7);
+  state.selectedDate = isoDate(date);
+  state.month = new Date(date.getFullYear(), date.getMonth(), 1);
+  render();
+}
+els.prevMonth.addEventListener("click", () => moveDate(-1));
+els.nextMonth.addEventListener("click", () => moveDate(1));
+els.calendarToggle.addEventListener("click", () => {
+  state.calendarExpanded = !state.calendarExpanded;
   render();
 });
-
-els.nextMonth.addEventListener("click", () => {
-  state.month = new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1);
+document.getElementById("goToday").addEventListener("click", () => {
+  const today = new Date();
+  state.selectedDate = isoDate(today);
+  state.month = new Date(today.getFullYear(), today.getMonth(), 1);
+  render();
+});
+document.getElementById("browseSchedule").addEventListener("click", () => setMobileTab("events"));
+document.getElementById("resetFilters").addEventListener("click", () => {
+  state.filters = {province: "all", city: "all", type: "all", openOnly: true};
+  els.openOnly.checked = true;
+  fillRegionOptions(true);
   render();
 });
 
@@ -411,8 +483,8 @@ els.cityFilter.addEventListener("change", (event) => {
   render();
 });
 
-els.typeFilter.addEventListener("change", (event) => {
-  state.filters.type = event.target.value;
+for (const button of els.typeButtons) button.addEventListener("click", () => {
+  state.filters.type = button.dataset.type;
   render();
 });
 
@@ -424,13 +496,6 @@ els.openOnly.addEventListener("change", (event) => {
 for (const tab of els.mobileTabs) {
   tab.addEventListener("click", () => {
     setMobileTab(tab.dataset.mobileTab);
-  });
-}
-
-for (const button of els.dayModeButtons) {
-  button.addEventListener("click", () => {
-    state.dayMode = button.dataset.dayMode;
-    render();
   });
 }
 
@@ -455,18 +520,22 @@ function closeEventDialog() {
 }
 
 function setMobileTab(tabName = "home") {
+  state.tab = tabName;
   document.body.dataset.mobileTab = tabName;
   for (const tab of els.mobileTabs) {
     tab.classList.toggle("is-active", tab.dataset.mobileTab === tabName);
+    tab.setAttribute("aria-pressed", String(tab.dataset.mobileTab === tabName));
   }
+  render();
+  window.scrollTo({ top: 0 });
 }
 
-loadEvents().catch((error) => {
-  els.calendar.textContent = error.message;
-  els.syncStatus.textContent = "일정 데이터를 불러오지 못했습니다.";
+initializeSession().catch(() => {
+  requireLogin("서버에 연결할 수 없습니다. 잠시 후 새로고침해 주세요.");
 });
 
 setInterval(() => {
+  if (!sessionReady) return;
   loadEvents().catch(() => {
     els.syncStatus.textContent = "자동 새로고침 실패";
   });

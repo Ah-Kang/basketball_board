@@ -1,14 +1,14 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { isSupabaseConfigured, upsertEventsToSupabase } from "../lib/supabase-events.js";
 
 const configPath = join(process.cwd(), "config", "cafes.json");
-const dataDir = join(process.cwd(), "data");
+const dataDir = resolve(process.env.APP_DATA_DIR || join(process.cwd(), "data"));
 const outputPath = join(dataDir, "events.json");
 const debugDir = join(dataDir, "debug");
-const sessionRoot = join(process.cwd(), ".browser-sessions");
+const sessionRoot = process.env.APP_DATA_DIR ? join(dataDir, "browser-sessions") : join(process.cwd(), ".browser-sessions");
 const legacyUserDataDir = join(process.cwd(), ".browser-session");
 const userId = getUserId();
 const authCookiesPath = join(dataDir, `auth-${userId}-cookies.json`);
@@ -22,6 +22,10 @@ const headless = process.env.SCRAPER_HEADLESS === "true" || process.argv.include
 const nonInteractive = process.env.SCRAPER_NONINTERACTIVE === "true" || process.argv.includes("--non-interactive");
 
 async function main() {
+  const localBrowsersPath = join(process.cwd(), ".playwright-browsers");
+  if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(localBrowsersPath)) {
+    process.env.PLAYWRIGHT_BROWSERS_PATH = localBrowsersPath;
+  }
   const { chromium } = await import("playwright").catch(() => {
     throw new Error("Playwright가 설치되어 있지 않습니다. 먼저 `npm install`을 실행하세요.");
   });
@@ -32,7 +36,7 @@ async function main() {
 
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   const publicOnly = accessMode === "public";
-  const firstRun = !publicOnly && !existsSync(userDataDir);
+  const firstRun = !publicOnly && !existsSync(userDataDir) && !existsSync(authCookiesPath);
   if (!publicOnly && (needsLogin || firstRun) && nonInteractive) {
     throw new Error("로그인 세션이 없어 자동 수집을 건너뜁니다. 먼저 `npm run scrape:login`으로 로그인하세요.");
   }

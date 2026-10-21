@@ -1,0 +1,35 @@
+name: Collect basketball events
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cafe-collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    # Standard public-repository runners are free. Never run on forks or private repos.
+    if: github.repository == 'Ah-Kang/basketball_board' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --no-audit --no-fund
+      - run: npx --no-install playwright install --with-deps chromium
+      - name: Collect and save privately
+        run: node scripts/collect-ci.js
+        env:
+          CAFE_COOKIES_JSON: ${{ secrets.CAFE_COOKIES_JSON }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
