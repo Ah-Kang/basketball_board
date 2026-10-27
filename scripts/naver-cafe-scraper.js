@@ -1,8 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, openSync, closeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { isSupabaseConfigured, upsertEventsToSupabase } from "../lib/supabase-events.js";
+import { isSupabaseConfigured, upsertEventsToSupabase, deletePastEvents } from "../lib/supabase-events.js";
+import { cleanDaumBody, explicitVenue, koreaToday } from "../lib/event-cleanup.js";
+import { accessIssue, reportAccess } from "../lib/session-alerts.js";
 
 const configPath = join(process.cwd(), "config", "cafes.json");
 const dataDir = resolve(process.env.APP_DATA_DIR || join(process.cwd(), "data"));
@@ -12,6 +15,11 @@ const sessionRoot = process.env.APP_DATA_DIR ? join(dataDir, "browser-sessions")
 const legacyUserDataDir = join(process.cwd(), ".browser-session");
 const userId = getUserId();
 const authCookiesPath = join(dataDir, `auth-${userId}-cookies.json`);
+const authStatePath = join(dataDir, `auth-${userId}-state.json`);
+const runLockPath = join(dataDir, `scraper-${userId}.lock`);
+let lockOwned = false;
+let activeContext;
+let activeBrowser;
 const userDataDir = userId === "default" && existsSync(legacyUserDataDir)
   ? legacyUserDataDir
   : join(sessionRoot, userId);
@@ -22,10 +30,27 @@ const headless = process.env.SCRAPER_HEADLESS === "true" || process.argv.include
 const nonInteractive = process.env.SCRAPER_NONINTERACTIVE === "true" || process.argv.includes("--non-interactive");
 
 async function main() {
-  const localBrowsersPath = join(process.cwd(), ".playwright-browsers");
-  if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(localBrowsersPath)) {
-    process.env.PLAYWRIGHT_BROWSERS_PATH = localBrowsersPath;
+  mkdirSync(dataDir, { recursive: true });
+  try {
+    const fd = openSync(runLockPath, "wx", 0o600);
+    writeFileSync(fd, String(process.pid));
+    closeSync(fd);
+    lockOwned = true;
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      const pid = Number(readFileSync(runLockPath, "utf8"));
+      try {
+        if (!Number.isInteger(pid) || pid <= 0) throw new Error("잠금 파일을 확인하세요.");
+        process.kill(pid, 0);
+      } catch (probe) {
+        if (probe.code === "ESRCH") { unlinkSync(runLockPath); return main(); }
+        throw probe;
+      }
+      throw new Error("이미 수집 또는 로그인 작업이 진행 중입니다. 동시에 세션을 변경하지 않습니다.");
+    }
+    throw error;
   }
+  if (isSupabaseConfigured() && !needsLogin) console.log(`지난 일정 ${await deletePastEvents()}개 정리`);
   const { chromium } = await import("playwright").catch(() => {
     throw new Error("Playwright가 설치되어 있지 않습니다. 먼저 `npm install`을 실행하세요.");
   });
@@ -35,22 +60,35 @@ async function main() {
   }
 
   const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const providerIndex = process.argv.indexOf("--provider");
+  const providerFilter = providerIndex < 0 ? null : process.argv[providerIndex + 1];
+  if (providerIndex >= 0 && !["daum", "naver"].includes(providerFilter)) {
+    throw new Error("--provider에는 daum 또는 naver를 지정하세요.");
+  }
+  const boards = config.boards.filter(board => !providerFilter || (board.provider || inferProvider(board.url)) === providerFilter);
+  if (!boards.length) throw new Error("수집할 카페 설정이 없습니다.");
   const publicOnly = accessMode === "public";
-  const firstRun = !publicOnly && !existsSync(userDataDir) && !existsSync(authCookiesPath);
+  const firstRun = !publicOnly && !existsSync(authCookiesPath) && !existsSync(userDataDir);
   if (!publicOnly && (needsLogin || firstRun) && nonInteractive) {
     throw new Error("로그인 세션이 없어 자동 수집을 건너뜁니다. 먼저 `npm run scrape:login`으로 로그인하세요.");
   }
-  if (!publicOnly && headless && nonInteractive && isBrowserProfileLocked()) {
+  if (!publicOnly && !existsSync(authCookiesPath) && !needsLogin && headless && nonInteractive && isBrowserProfileLocked()) {
     throw new Error([
       "로그인 세션 브라우저가 이미 열려 있어 자동 수집을 건너뜁니다.",
       "자동 수집은 기존 창을 건드리지 않고 다음 주기에 다시 시도합니다.",
       `잠금 정보: ${readSessionLockInfo()}`
     ].join("\n"));
   }
-  const browser = await chromium.launchPersistentContext(userDataDir, {
+  const isolated = publicOnly || needsLogin || existsSync(authCookiesPath);
+  const launcher = isolated ? await chromium.launch({ headless }) : null;
+  activeBrowser = launcher;
+  const browser = await (isolated ? launcher.newContext({
+    viewport: { width: 1440, height: 1000 },
+    ...(!publicOnly && existsSync(authStatePath) ? { storageState: authStatePath } : {})
+  }) : chromium.launchPersistentContext(userDataDir, {
     headless,
     viewport: { width: 1440, height: 1000 }
-  }).catch((error) => {
+  })).catch((error) => {
     if (String(error.message).includes("Opening in existing browser session")) {
       throw new Error([
         ".browser-session을 이미 다른 Chromium 창이 사용 중입니다.",
@@ -61,21 +99,26 @@ async function main() {
     }
     throw error;
   });
+  activeContext = browser;
   const firstBoard = config.boards[0];
   if (!firstBoard) throw new Error("config/cafes.json에 boards를 하나 이상 설정하세요.");
-  if (!publicOnly) await loadSavedAuthCookies(browser);
+  if (!publicOnly && !existsSync(authStatePath)) await loadSavedAuthCookies(browser);
   const page = await browser.newPage();
   page.setDefaultTimeout(8000);
   page.setDefaultNavigationTimeout(15000);
 
   if (!publicOnly && (needsLogin || firstRun)) {
-    await openLoginTabs(browser, page, config.boards);
+    const providerArg = process.argv.indexOf("--provider");
+    const loginBoards = providerArg < 0 ? config.boards : config.boards.filter(board => board.provider === process.argv[providerArg + 1]);
+    if (!loginBoards.length) throw new Error("로그인할 카페 설정이 없습니다.");
+    await openLoginTabs(browser, page, loginBoards);
     const rl = createInterface({ input, output });
     await rl.question("열린 탭에서 필요한 카페 로그인을 모두 완료한 뒤 Enter를 누르세요.");
     rl.close();
     if (loginOnly) {
       await saveAuthCookies(browser);
       await browser.close();
+      await launcher?.close();
       console.log(`로그인 세션을 저장했습니다. 사용자: ${userId}`);
       return;
     }
@@ -83,9 +126,16 @@ async function main() {
 
   const collected = [];
   const scrapedBoardKeys = new Set();
-  for (const board of config.boards) {
+  for (const board of boards) {
     console.log(`수집 시작: ${board.name}`);
-    const result = await collectBoard(page, board);
+    let result;
+    try {
+      result = await collectBoard(page, board);
+    } catch {
+      console.error(`${board.name}: 수집 실패. 기존 데이터는 유지하고 다음 게시판을 진행합니다.`);
+      process.exitCode = 1;
+      continue;
+    }
     const rows = result.rows;
     if (result.listOk) scrapedBoardKeys.add(boardKey(board));
     console.log(`- 키워드 매칭 글 ${rows.length}개`);
@@ -98,15 +148,19 @@ async function main() {
   }
 
   const existing = existsSync(outputPath) ? JSON.parse(readFileSync(outputPath, "utf8")) : [];
-  const merged = mergeEvents(existing, collected, config.boards, scrapedBoardKeys);
+  const merged = mergeEvents(existing, collected, config.boards, scrapedBoardKeys).filter(event => event.date >= koreaToday());
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(merged, null, 2)}\n`);
-  if (isSupabaseConfigured()) {
-    await upsertEventsToSupabase(merged);
-    console.log(`Supabase events 테이블에 ${merged.length}개 일정을 저장했습니다.`);
-  }
   if (!publicOnly) await saveAuthCookies(browser);
   await browser.close();
+  await launcher?.close();
+  if (isSupabaseConfigured()) {
+    const collectedIds = new Set(collected.map(event => event.id));
+    const updates = merged.filter(event => collectedIds.has(event.id));
+    await upsertEventsToSupabase(updates);
+    console.log(`지난 일정 ${await deletePastEvents()}개를 DB에서 삭제했습니다.`);
+    console.log(`Supabase events 테이블에 이번에 수집한 ${updates.length}개 일정을 저장했습니다.`);
+  }
   if (!collected.length) {
     console.log("실제 카페 글을 찾지 못했습니다. data/debug 폴더의 HTML 스냅샷을 확인해 선택자를 조정해야 합니다.");
   }
@@ -122,20 +176,19 @@ async function loadSavedAuthCookies(browser) {
 }
 
 async function saveAuthCookies(browser) {
-  const cookies = await browser.cookies(
-    "https://naver.com",
-    "https://cafe.naver.com",
-    "https://nid.naver.com",
-    "https://article.cafe.naver.com",
-    "https://daum.net",
-    "https://cafe.daum.net"
-  );
+  // Include mobile-only hosts and path-scoped login cookies.
+  const cookies = await browser.cookies();
   const authCookies = cookies.filter((cookie) => (
-    /(^NID_|^nid_|^NNB$|^DAUM|^HM_CU|^TS=|^HTS$|^PROF$|^LSID$)/.test(cookie.name)
-    || /naver\.com|daum\.net/.test(cookie.domain)
+    /(^|\.)(naver\.com|daum\.net|kakao\.com)$/.test(cookie.domain)
   ));
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(authCookiesPath, `${JSON.stringify(authCookies, null, 2)}\n`);
+  const state = await browser.storageState();
+  state.cookies = authCookies;
+  state.origins = state.origins.filter(entry => /(^|\.)(naver\.com|daum\.net|kakao\.com)$/.test(new URL(entry.origin).hostname));
+  for (const [path, value] of [[authStatePath, state], [authCookiesPath, authCookies]]) {
+    writeFileSync(`${path}.tmp`, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    renameSync(`${path}.tmp`, path);
+  }
   console.log(`로그인 쿠키 ${authCookies.length}개를 저장했습니다: ${authCookiesPath}`);
 }
 
@@ -217,7 +270,18 @@ async function collectBoard(page, board) {
       continue;
     }
     await page.waitForTimeout(1800);
+    const accessText = await page.locator("body").innerText().catch(() => "");
+    const issue = accessIssue(accessText);
+    if (issue && accessMode !== "public") {
+      reportAccess(join(dataDir, `session-status-${userId}.json`), boardKey(board), issue);
+      console.log("  로그인 또는 회원 권한 확인 필요: 기존 데이터를 유지합니다.");
+      throw new Error(`${board.name}: 로그인 또는 회원 권한 확인이 필요합니다. DB를 변경하지 않았습니다.`);
+    }
     const body = await readArticleBodyWithFallback(page, provider, post.href);
+    if (body?.trim() && !isUnreadableBody(body) && accessMode !== "public") {
+      reportAccess(join(dataDir, `session-status-${userId}.json`), boardKey(board), null);
+      await saveAuthCookies(page.context());
+    }
     if (!body?.trim()) {
       console.log("  본문을 찾지 못했습니다.");
       await saveDebugSnapshot(page, board, "no-body");
@@ -420,7 +484,7 @@ async function readArticleBody(page, provider) {
         items.map((item) => item.innerText || item.textContent || "")
       )).catch(() => []);
       for (const text of texts) {
-        const cleaned = cleanFullBodyText(text);
+        const cleaned = provider === "daum" ? cleanDaumBody(text) : cleanFullBodyText(text);
         if (cleaned) candidates.push(cleaned);
       }
     }
@@ -658,17 +722,18 @@ function shouldSkipPost(post, board) {
   return false;
 }
 
-function parseCafePost(row, board, collection = {}) {
+export function parseCafePost(row, board, collection = {}) {
   const provider = row.provider || board.provider || inferProvider(row.url || board.url);
   const title = normalizeDigits(row.title);
-  const body = normalizeDigits(row.body);
+  const body = normalizeDigits(provider === "daum" ? cleanDaumBody(row.body) : row.body);
   const displayBody = provider === "naver" ? cleanNaverArticleText(body) : body;
-  const compactBody = normalizeDigits(row.compactBody || row.body).replace(/\s+/g, " ").trim();
+  const compactBody = body.replace(/\s+/g, " ").trim();
   const displayCompactBody = (displayBody || compactBody).replace(/\s+/g, " ").trim();
   const text = `${title} ${compactBody}`;
-  const date = inferDate(title) || inferDate(body) || new Date().toISOString().slice(0, 10);
+  const titleDay = title.match(/(?:^|\D)(\d{1,2})일/);
+  const date = inferDate(title) || (titleDay ? `${koreaToday().slice(0, 7)}-${titleDay[1].padStart(2, "0")}` : null) || inferDate(body) || koreaToday();
   const time = inferTime(title) || inferTime(body) || { startTime: "00:00", endTime: "00:00" };
-  const area = inferArea(text, board.defaultArea);
+  const area = inferArea(title, "") || inferArea(body, board.defaultArea);
   const type = inferType(text);
 
   return {
@@ -679,7 +744,7 @@ function parseCafePost(row, board, collection = {}) {
     startTime: time.startTime,
     endTime: time.endTime,
     area,
-    venue: inferVenue(text, area),
+    venue: explicitVenue(body) || inferVenue(text, area),
     fee: inferFee(text),
     spots: inferSpots(text),
     status: text.includes("마감") ? "closed" : "open",
@@ -805,7 +870,7 @@ function inferType(text) {
 }
 
 function inferArea(text, fallback = "미정") {
-  const areas = ["강남", "잠실", "성수", "마포", "홍대", "신촌", "건대", "노원", "수원", "분당", "일산", "인천"];
+  const areas = ["용인", "하남", "동탄", "오산", "안양", "김포", "고양", "강북", "강서", "송파", "은평", "성동", "강동", "강남", "잠실", "성수", "마포", "홍대", "신촌", "건대", "노원", "수원", "분당", "일산", "인천"];
   return areas.find((area) => text.includes(area)) || fallback;
 }
 
@@ -898,6 +963,7 @@ function preferRicherEvent(previous, next) {
   const previousBody = String(previous.bodyText || "");
   const nextBody = String(next.bodyText || "");
   if (bodyQualityScore(previousBody) > bodyQualityScore(nextBody)) {
+    if (String(next.sourceUrl).includes("daum.net") && cleanDaumBody(previousBody) !== previousBody.trim() && nextBody.trim()) return next;
     return {
       ...next,
       summary: previous.summary || next.summary,
@@ -983,11 +1049,15 @@ function pathExistsEvenIfBrokenSymlink(path) {
   }
 }
 
-main().catch((error) => {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((error) => {
   console.error(error.message);
   if (String(error.message).includes("자동 수집을 건너뜁니다")) {
     process.exitCode = 0;
     return;
   }
   process.exitCode = 1;
+}).finally(async () => {
+  await activeContext?.close().catch(() => {});
+  await activeBrowser?.close().catch(() => {});
+  if (lockOwned) unlinkSync(runLockPath);
 });

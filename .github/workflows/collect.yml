@@ -1,8 +1,7 @@
 name: Collect basketball events
 
 on:
-  schedule:
-    - cron: '17 * * * *'
+  # Collection runs on the owner's Mac; do not replay stale cloud cookies.
   workflow_dispatch:
 
 permissions:
