@@ -182,9 +182,19 @@ async function saveAuthCookies(browser) {
     /(^|\.)(naver\.com|daum\.net|kakao\.com)$/.test(cookie.domain)
   ));
   mkdirSync(dataDir, { recursive: true });
-  const state = await browser.storageState();
-  state.cookies = authCookies;
-  state.origins = state.origins.filter(entry => /(^|\.)(naver\.com|daum\.net|kakao\.com)$/.test(new URL(entry.origin).hostname));
+  const previous = existsSync(authStatePath) ? JSON.parse(readFileSync(authStatePath, "utf8")) : { origins: [] };
+  const origins = new Map(previous.origins.map(entry => [entry.origin, entry]));
+  // Snapshot only already-open trusted frames; storageState may navigate old CDN origins.
+  for (const page of browser.pages()) {
+    for (const frame of page.frames()) {
+      let url;
+      try { url = new URL(frame.url()); } catch { continue; }
+      if (url.protocol !== "https:" || !/(^|\.)(naver\.com|daum\.net|kakao\.com)$/.test(url.hostname)) continue;
+      const localStorage = await frame.evaluate(() => Object.entries(window.localStorage).map(([name, value]) => ({ name, value }))).catch(() => null);
+      if (localStorage) origins.set(url.origin, { origin: url.origin, localStorage });
+    }
+  }
+  const state = { cookies: authCookies, origins: [...origins.values()] };
   for (const [path, value] of [[authStatePath, state], [authCookiesPath, authCookies]]) {
     writeFileSync(`${path}.tmp`, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     renameSync(`${path}.tmp`, path);
